@@ -192,15 +192,37 @@
         </div>
 
         <div class="input-wrapper">
-          <a-textarea
-            v-model:value="inputMessage"
-            :placeholder="getInputPlaceholder()"
-            :auto-size="{ minRows: 2, maxRows: 6 }"
-            :disabled="!canSendMessage || loading"
-            @pressEnter="handleEnter"
-            @paste="handlePaste"
-            class="chat-input"
-          />
+          <div class="input-row">
+            <a-textarea
+              v-model:value="inputMessage"
+              :placeholder="getInputPlaceholder()"
+              :auto-size="{ minRows: 2, maxRows: 6 }"
+              :disabled="!canSendMessage || loading"
+              @pressEnter="handleEnter"
+              @paste="handlePaste"
+              class="chat-input"
+            />
+            <!-- 文件上传按钮 -->
+            <div class="upload-btn-wrapper">
+              <a-tooltip :title="getUploadTooltip()">
+                <a-button
+                  class="upload-btn"
+                  size="large"
+                  :disabled="!canSendMessage || loading"
+                  @click="triggerFileInput"
+                >
+                  <PaperClipOutlined />
+                </a-button>
+              </a-tooltip>
+              <input
+                ref="fileInputRef"
+                type="file"
+                :accept="getFileAcceptTypes()"
+                style="display: none"
+                @change="onFileInputChange"
+              />
+            </div>
+          </div>
           <div class="input-actions">
             <a-button
               type="primary"
@@ -310,6 +332,7 @@ import {
   FilePdfOutlined,
   PictureOutlined,
   DeleteOutlined,
+  PaperClipOutlined,
 } from '@ant-design/icons-vue'
 
 // 路由策略选项
@@ -364,6 +387,7 @@ const selectedPluginKey = ref<string>('')
 // 文件上传
 const uploadedFile = ref<File | null>(null)
 const uploadedFilePreviewUrl = ref<string>('')
+const fileInputRef = ref<HTMLInputElement>()
 
 // 计算不同类别的模型
 const fastModels = computed(() => {
@@ -520,6 +544,51 @@ const clearFile = () => {
     uploadedFilePreviewUrl.value = ''
   }
   uploadedFile.value = null
+}
+
+// 触发文件选择
+const triggerFileInput = () => {
+  fileInputRef.value?.click()
+}
+
+// 文件选择回调
+const onFileInputChange = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (file) {
+    // 根据文件类型自动选择插件
+    const isImage = file.type.startsWith('image/')
+    const isPdf = file.type === 'application/pdf'
+
+    if (isImage) {
+      selectedPluginKey.value = 'image_recognition'
+      enableWebSearch.value = false
+    } else if (isPdf) {
+      selectedPluginKey.value = 'pdf_parser'
+      enableWebSearch.value = false
+    } else {
+      message.error('暂不支持该文件类型，仅支持图片和 PDF')
+      target.value = ''
+      return
+    }
+
+    handleFileSelect(file)
+  }
+  target.value = ''
+}
+
+// 根据当前插件状态获取文件选择器的 accept 类型
+const getFileAcceptTypes = () => {
+  if (selectedPluginKey.value === 'pdf_parser') return 'application/pdf'
+  if (selectedPluginKey.value === 'image_recognition') return 'image/*'
+  return 'image/*,application/pdf'
+}
+
+// 获取上传按钮的提示文本
+const getUploadTooltip = () => {
+  if (selectedPluginKey.value === 'pdf_parser') return '上传 PDF'
+  if (selectedPluginKey.value === 'image_recognition') return '上传图片'
+  return '上传文件（图片 / PDF）'
 }
 
 // 获取输入框提示文本
@@ -1686,6 +1755,39 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.input-row .chat-input {
+  flex: 1;
+}
+
+.upload-btn-wrapper {
+  flex-shrink: 0;
+}
+
+.upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px dashed #d9d9d9;
+  color: #8c8c8c;
+  transition: all 0.3s;
+  padding: 0;
+}
+
+.upload-btn:hover {
+  color: #1890ff;
+  border-color: #1890ff;
+  background: #f0f5ff;
 }
 
 .chat-input {

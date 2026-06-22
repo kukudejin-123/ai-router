@@ -5,7 +5,7 @@
       <a-col flex="200px">
         <RouterLink to="/">
           <div class="header-left">
-            <img class="logo" src="@/assets/logo.png" alt="Logo" />
+            <img class="logo" src="@/assets/router.svg" alt="Logo" />
             <h1 class="site-title">AI 网关</h1>
           </div>
         </RouterLink>
