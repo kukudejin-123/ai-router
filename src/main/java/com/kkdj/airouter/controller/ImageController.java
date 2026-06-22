@@ -3,6 +3,7 @@ package com.kkdj.airouter.controller;
 import cn.hutool.core.util.StrUtil;
 import com.mybatisflex.core.paginate.Page;
 import com.kkdj.airouter.annotation.AuthCheck;
+import com.kkdj.airouter.annotation.RateLimit;
 import com.kkdj.airouter.common.BaseResponse;
 import com.kkdj.airouter.common.ResultUtils;
 import com.kkdj.airouter.constant.UserConstant;
@@ -45,6 +46,7 @@ public class ImageController {
      */
     @PostMapping("/generations")
     @Operation(summary = "生成图片")
+    @RateLimit(type = RateLimit.LimitType.API_KEY, limit = 10)
     public ImageGenerationResponse generateImage(
             @RequestBody ImageGenerationRequest request,
             @RequestHeader(value = "Authorization", required = false) String authorization,

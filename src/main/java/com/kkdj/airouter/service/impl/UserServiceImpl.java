@@ -15,7 +15,9 @@ import com.kkdj.airouter.model.enums.UserStatusEnum;
 import com.kkdj.airouter.model.vo.LoginUserVO;
 import com.kkdj.airouter.model.vo.UserVO;
 import com.kkdj.airouter.service.UserService;
+import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
 
@@ -28,10 +30,13 @@ import static com.kkdj.airouter.constant.UserConstant.USER_LOGIN_STATE;
 
 /**
  * 用户 服务层实现。
- 
+
  */
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
+
+    @Resource
+    private PasswordEncoder passwordEncoder;
 
     @Override
     public long userRegister(String userAccount, String userPassword, String checkPassword) {
@@ -80,6 +85,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         return loginUserVO;
     }
 
+    private static final String MD5_SALT = "kkdj";
+
     @Override
     public LoginUserVO userLogin(String userAccount, String userPassword, HttpServletRequest request) {
         // 1. 校验参数
@@ -92,14 +99,27 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (userPassword.length() < 8) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "密码长度过短");
         }
-        // 2. 加密
-        String encryptPassword = getEncryptPassword(userPassword);
-        // 3. 查询用户是否存在
-        QueryWrapper queryWrapper = new QueryWrapper();
+        // 2. 查询用户
+        QueryWrapper queryWrapper = QueryWrapper.create();
         queryWrapper.eq("userAccount", userAccount);
-        queryWrapper.eq("userPassword", encryptPassword);
         User user = this.mapper.selectOneByQuery(queryWrapper);
         if (user == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户不存在或密码错误");
+        }
+
+        // 3. 验证密码（兼容 BCrypt 和旧 MD5）
+        boolean passwordMatched = passwordEncoder.matches(userPassword, user.getUserPassword());
+        if (!passwordMatched) {
+            // 尝试旧 MD5 校验（兼容升级前的用户）
+            String oldMd5 = DigestUtils.md5DigestAsHex((userPassword + MD5_SALT).getBytes(StandardCharsets.UTF_8));
+            if (oldMd5.equals(user.getUserPassword())) {
+                // MD5 匹配成功，升级为 BCrypt
+                user.setUserPassword(passwordEncoder.encode(userPassword));
+                this.updateById(user);
+                passwordMatched = true;
+            }
+        }
+        if (!passwordMatched) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户不存在或密码错误");
         }
         // 4. 检查用户状态
@@ -173,20 +193,29 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         String userRole = userQueryRequest.getUserRole();
         String sortField = userQueryRequest.getSortField();
         String sortOrder = userQueryRequest.getSortOrder();
+
+        // 防止 SQL 注入：只允许白名单字段排序
+        String safeSortField = null;
+        if (StrUtil.isNotBlank(sortField)) {
+            java.util.Set<String> allowedFields = java.util.Set.of("id", "userAccount", "userName",
+                    "userRole", "userStatus", "tokenQuota", "usedTokens", "createTime", "updateTime");
+            if (allowedFields.contains(sortField)) {
+                safeSortField = sortField;
+            }
+        }
+
         return QueryWrapper.create()
-                .eq("id", id) // where id = ${id}
-                .eq("userRole", userRole) // and userRole = ${userRole}
+                .eq("id", id)
+                .eq("userRole", userRole)
                 .like("userAccount", userAccount)
                 .like("userName", userName)
                 .like("userProfile", userProfile)
-                .orderBy(sortField, "ascend".equals(sortOrder));
+                .orderBy(safeSortField, "ascend".equals(sortOrder));
     }
 
     @Override
     public String getEncryptPassword(String userPassword) {
-        // 盐值，混淆密码
-        final String SALT = "kkdj";
-        return DigestUtils.md5DigestAsHex((userPassword + SALT).getBytes(StandardCharsets.UTF_8));
+        return passwordEncoder.encode(userPassword);
     }
 
     @Override

@@ -27,6 +27,7 @@ public class AIMetricsCollector {
     private final ConcurrentHashMap<String, Counter> modelRequestCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> modelTokenCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Counter> userRequestCounters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> modelErrorCounters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Timer> modelTimers = new ConcurrentHashMap<>();
 
     public AIMetricsCollector(MeterRegistry meterRegistry) {
@@ -88,11 +89,14 @@ public class AIMetricsCollector {
     public void recordError(String modelKey, String errorType) {
         totalErrorsCounter.increment();
 
-        Counter.builder("ai.errors")
-                .tag("model", modelKey != null ? modelKey : "unknown")
-                .tag("type", errorType != null ? errorType : "unknown")
-                .register(meterRegistry)
-                .increment();
+        String errorKey = (modelKey != null ? modelKey : "unknown") + ":" + (errorType != null ? errorType : "unknown");
+        modelErrorCounters.computeIfAbsent(errorKey, k ->
+                Counter.builder("ai.errors")
+                        .description("按模型和类型统计的错误数")
+                        .tag("model", modelKey != null ? modelKey : "unknown")
+                        .tag("type", errorType != null ? errorType : "unknown")
+                        .register(meterRegistry)
+        ).increment();
     }
 
     /**

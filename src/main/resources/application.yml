@@ -57,6 +57,12 @@ stripe:
 plugin:
   serpapi:
     api-key: ${SERPAPI_API_KEY:}
+# 加密配置
+encryption:
+  secret-key: ${ENCRYPTION_SECRET_KEY:ai-router-secret-key-256}
+# CORS 配置
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
 # 监控配置
 management:
   endpoints:

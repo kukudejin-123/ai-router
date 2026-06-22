@@ -31,6 +31,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 图片生成服务实现
@@ -70,6 +74,7 @@ public class ImageGenerationServiceImpl extends ServiceImpl<ImageGenerationRecor
     private static final String DEFAULT_MODEL = "qwen-image-plus";
     private static final String DEFAULT_SIZE = "1024*1024";
     private static final int DEFAULT_N = 1;
+    private static final ScheduledExecutorService POOL_EXECUTOR = Executors.newScheduledThreadPool(2);
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -275,73 +280,77 @@ public class ImageGenerationServiceImpl extends ServiceImpl<ImageGenerationRecor
             String taskId = rootNode.get("output").get("task_id").asText();
             log.info("图片生成任务ID：{}", taskId);
 
-            // 轮询任务状态
+            // 轮询任务状态（使用 ScheduledExecutorService 替代 Thread.sleep）
             String taskApiUrl = provider.getBaseUrl().replace("/compatible-mode", "") + "/api/v1/tasks/" + taskId;
 
-            int maxRetries = 60;  // 最多轮询60次
-            int retryCount = 0;
+            CompletableFuture<ImageGenerationResponse> future = new CompletableFuture<>();
+            String taskUrl = taskApiUrl;
+            String apiKey = provider.getApiKey();
 
-            while (retryCount < maxRetries) {
-                Thread.sleep(2000);  // 等待2秒
+            java.util.concurrent.ScheduledFuture<?> pollingFuture = POOL_EXECUTOR.scheduleAtFixedRate(() -> {
+                try {
+                    HttpResponse pollResponse = HttpRequest.get(taskUrl)
+                            .header("Authorization", "Bearer " + apiKey)
+                            .timeout(10000)
+                            .execute();
 
-                HttpResponse taskResponse = HttpRequest.get(taskApiUrl)
-                        .header("Authorization", "Bearer " + provider.getApiKey())
-                        .timeout(10000)
-                        .execute();
+                    JsonNode taskNode = objectMapper.readTree(pollResponse.body());
 
-                String taskResponseBody = taskResponse.body();
-                JsonNode taskNode = objectMapper.readTree(taskResponseBody);
+                    if (!taskNode.has("output") || !taskNode.get("output").has("task_status")) {
+                        return;
+                    }
 
-                if (!taskNode.has("output") || !taskNode.get("output").has("task_status")) {
-                    retryCount++;
-                    continue;
-                }
+                    String taskStatus = taskNode.get("output").get("task_status").asText();
 
-                String taskStatus = taskNode.get("output").get("task_status").asText();
-                log.info("任务状态：{} (轮询次数: {})", taskStatus, retryCount + 1);
-
-                if ("SUCCEEDED".equals(taskStatus)) {
-                    // 任务成功，提取图片URL
-                    List<ImageGenerationResponse.ImageData> imageDataList = new ArrayList<>();
-
-                    if (taskNode.has("output") && taskNode.get("output").has("results")) {
-                        JsonNode results = taskNode.get("output").get("results");
-                        for (JsonNode result : results) {
-                            if (result.has("url")) {
-                                ImageGenerationResponse.ImageData imageData = ImageGenerationResponse.ImageData.builder()
-                                        .url(result.get("url").asText())
-                                        .revisedPrompt(request.getPrompt())
-                                        .build();
-                                imageDataList.add(imageData);
+                    if ("SUCCEEDED".equals(taskStatus)) {
+                        List<ImageGenerationResponse.ImageData> imageDataList = new ArrayList<>();
+                        if (taskNode.has("output") && taskNode.get("output").has("results")) {
+                            JsonNode results = taskNode.get("output").get("results");
+                            for (JsonNode result : results) {
+                                if (result.has("url")) {
+                                    imageDataList.add(ImageGenerationResponse.ImageData.builder()
+                                            .url(result.get("url").asText())
+                                            .revisedPrompt(request.getPrompt())
+                                            .build());
+                                }
                             }
                         }
+                        if (imageDataList.isEmpty()) {
+                            future.completeExceptionally(
+                                    new BusinessException(ErrorCode.SYSTEM_ERROR, "任务成功但未返回图片"));
+                        } else {
+                            future.complete(ImageGenerationResponse.builder()
+                                    .created(System.currentTimeMillis() / 1000)
+                                    .data(imageDataList)
+                                    .build());
+                        }
+                    } else if ("FAILED".equals(taskStatus)) {
+                        String errorMsg = taskNode.has("output") && taskNode.get("output").has("message")
+                                ? taskNode.get("output").get("message").asText()
+                                : "任务失败";
+                        future.completeExceptionally(
+                                new BusinessException(ErrorCode.SYSTEM_ERROR, "图片生成失败：" + errorMsg));
                     }
-
-                    if (imageDataList.isEmpty()) {
-                        throw new BusinessException(ErrorCode.SYSTEM_ERROR, "任务成功但未返回图片");
-                    }
-
-                    return ImageGenerationResponse.builder()
-                            .created(System.currentTimeMillis() / 1000)
-                            .data(imageDataList)
-                            .build();
-
-                } else if ("FAILED".equals(taskStatus)) {
-                    String errorMsg = taskNode.has("output") && taskNode.get("output").has("message")
-                            ? taskNode.get("output").get("message").asText()
-                            : "任务失败";
-                    throw new BusinessException(ErrorCode.SYSTEM_ERROR, "图片生成失败：" + errorMsg);
+                } catch (Exception e) {
+                    log.warn("轮询任务状态失败", e);
                 }
+            }, 2, 2, TimeUnit.SECONDS);
 
-                // PENDING, RUNNING 状态继续轮询
-                retryCount++;
+            try {
+                // 等待任务完成（最多 120 秒超时）
+                ImageGenerationResponse result = future.get(120, TimeUnit.SECONDS);
+                return result;
+            } catch (java.util.concurrent.TimeoutException e) {
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "图片生成超时");
+            } catch (java.util.concurrent.ExecutionException e) {
+                if (e.getCause() instanceof BusinessException be) {
+                    throw be;
+                }
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "图片生成失败");
+            } finally {
+                pollingFuture.cancel(false);
             }
 
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "图片生成超时");
-
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "图片生成被中断");
         } catch (Exception e) {
             log.error("调用通义万相API失败", e);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "调用图片生成API失败: " + e.getMessage());

@@ -224,13 +224,7 @@ create table if not exists user_provider_key
     KEY uk_user_provider (userId, providerId)
 ) comment '用户提供者密钥（BYOK）' collate = utf8mb4_unicode_ci;
 
--- 初始化用户数据
--- 密码是 12345678（MD5 加密 + 盐值 kkdj）
-INSERT INTO user (id, userAccount, userPassword, userName, userAvatar, userProfile, userRole, tokenQuota, balance)
-VALUES
-    (1, 'admin', 'b6559ab2313ec4c8754469708b64f52e', '管理员', NULL, '系统管理员', 'admin', -1, 999999.0000),
-    (2, 'user', 'b6559ab2313ec4c8754469708b64f52e', '普通用户', NULL, '我是一个普通用户', 'user', 100000, 0.0000),
-    (3, 'test', 'b6559ab2313ec4c8754469708b64f52e', '测试账号', NULL, '这是一个测试账号', 'user', 50000, 0.0000);
+-- 初始化用户数据在应用启动时通过 DataInitializer 自动创建（BCrypt 加密）
 
 -- 初始化模型提供者数据（全部走阿里云百炼OpenAI兼容接口）
 INSERT INTO model_provider (providerName, displayName, baseUrl, apiKey, status, priority)

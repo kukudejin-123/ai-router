@@ -67,7 +67,7 @@ public class StripeWebhookController {
             return "success";
         } catch (Exception e) {
             log.error("处理Stripe Webhook失败", e);
-            return "error";
+            throw new RuntimeException(e);
         }
     }
 }
